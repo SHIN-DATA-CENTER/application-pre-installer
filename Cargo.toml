@@ -1,0 +1,38 @@
+[package]
+name = "application-pre-installer"
+version = "0.5.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Windows setup assistant built with Rust and Slint"
+license = "MIT"
+repository = "https://github.com/SHIN-DATA-CENTER/application-pre-installer"
+build = "build.rs"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+directories = "6"
+fs2 = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+rfd = "0.15"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "accessibility", "compat-1-2"] }
+unicode-width = "0.2"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_Registry", "Win32_Storage_FileSystem"] }
+
+[build-dependencies]
+slint-build = "=1.18.1"
+winresource = "0.1"
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1
+

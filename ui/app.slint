@@ -1,0 +1,644 @@
+import { VerticalBox, HorizontalBox, Button, CheckBox, LineEdit, ComboBox, ScrollView, ListView, TextEdit, Spinner, AboutSlint, Palette } from "std-widgets.slint";
+
+export struct ItemRow { key: string, title: string, subtitle: string, meta: string, status: string, group-title: string, checked: bool, enabled: bool }
+export struct CategoryRow { name: string, label: string, count: int }
+
+component ItemCard inherits Rectangle {
+    in property <ItemRow> item;
+    in property <bool> locked;
+    in property <bool> selectable: true;
+    callback toggle(bool);
+    callback details();
+    height: 84px;
+    background: item.checked && root.selectable ? #eef4fc : #ffffff;
+    Rectangle { y: parent.height - 1px; height: 1px; background: #edf0f3; }
+    HorizontalBox {
+        padding: 12px; spacing: 12px;
+        if root.selectable : Rectangle {
+            width: 28px; background: transparent;
+            CheckBox {
+                width: 28px; height: 26px; y: (parent.height - self.height) / 2;
+                accessible-label: root.item.title; enabled: root.item.enabled && !root.locked;
+                checked: root.item.checked; toggled => { root.toggle(self.checked); }
+            }
+        }
+        VerticalBox {
+            padding: 0; spacing: 3px; alignment: center; horizontal-stretch: 1;
+            Text { height: 20px; text: root.item.title; color: #202832; font-size: 14px; font-weight: 600; overflow: elide; vertical-alignment: center; }
+            Text { height: 16px; text: root.item.subtitle; color: #596574; font-size: 12px; overflow: elide; vertical-alignment: center; }
+            Text { height: 15px; text: root.item.meta; color: #73808e; font-size: 11px; overflow: elide; vertical-alignment: center; }
+        }
+        VerticalBox {
+            width: 112px; padding: 0; spacing: 5px; alignment: center;
+            Text {
+                height: 18px; text: root.item.status; horizontal-alignment: right; vertical-alignment: center; font-size: 11px; overflow: elide;
+                color: !root.item.enabled ? #7c8793 : root.item.status == "失敗" ? #b42318 : root.item.status == "成功" ? #28724c : #455970;
+            }
+            Button { height: 28px; text: "詳細"; clicked => { root.details(); } }
+        }
+    }
+}
+
+component EnvironmentField inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    height: 42px; background: transparent;
+    Rectangle { y: parent.height - 1px; height: 1px; background: #edf0f3; }
+    HorizontalBox {
+        padding: 0; spacing: 12px;
+        Text { width: 108px; text: root.label; color: #687484; font-size: 12px; vertical-alignment: center; }
+        Text { text: root.value; color: #252f3b; font-size: 13px; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+    }
+}
+
+component MatchSource inherits Rectangle {
+    in property <ItemRow> item;
+    in property <bool> locked;
+    callback choose();
+    height: 80px; background: item.checked ? #e5eef9 : #ffffff;
+    accessible-role: button; accessible-label: item.title + " / " + item.subtitle + " / " + item.meta;
+    accessible-enabled: !root.locked; accessible-action-default => { root.choose(); }
+    forward-focus: source-focus;
+    border-width: source-focus.has-focus ? 1px : 0px; border-color: #2865a8;
+    VerticalBox {
+        padding: 10px; spacing: 3px; alignment: center;
+        Text { height: 20px; text: root.item.title; font-weight: 600; color: #253448; overflow: elide; vertical-alignment: center; }
+        Text { height: 16px; text: root.item.subtitle; font-size: 11px; color: #687585; overflow: elide; vertical-alignment: center; }
+        Text { height: 16px; text: root.item.meta; font-size: 11px; color: #536984; overflow: elide; vertical-alignment: center; }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: #e9edf2; }
+    TouchArea { enabled: !root.locked; mouse-cursor: pointer; clicked => { source-focus.focus(); root.choose(); } }
+    source-focus := FocusScope { width: 0px; enabled: !root.locked; key-pressed(event) => { if event.text == Key.Space || event.text == Key.Return { root.choose(); return accept; } return reject; } }
+}
+
+component MatchCandidate inherits Rectangle {
+    in property <ItemRow> item;
+    in property <bool> locked;
+    callback add();
+    callback details();
+    height: 80px; background: item.checked ? #eef4fc : #ffffff;
+    HorizontalBox {
+        padding: 10px; spacing: 8px;
+        VerticalBox {
+            padding: 0; spacing: 3px; alignment: center; horizontal-stretch: 1;
+            Text { height: 20px; text: root.item.title; font-weight: 600; color: #253448; overflow: elide; vertical-alignment: center; }
+            Text { height: 16px; text: root.item.subtitle; font-size: 11px; color: #687585; overflow: elide; vertical-alignment: center; }
+            Text { height: 16px; text: root.item.meta; font-size: 11px; color: #536984; overflow: elide; vertical-alignment: center; }
+        }
+        Button { width: 60px; height: 30px; text: "詳細"; enabled: !root.locked; clicked => { root.details(); } }
+        Button { width: 72px; height: 30px; text: root.item.checked ? "追加済み" : "追加"; enabled: !root.locked && !root.item.checked; clicked => { root.add(); } }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: #e9edf2; }
+}
+
+export component AppWindow inherits Window {
+    title: "Application Pre-Installer";
+    preferred-width: 1220px; preferred-height: 860px;
+    min-width: 1040px; min-height: 760px;
+    background: #f7f8fa;
+    default-font-family: "Yu Gothic UI"; default-font-size: 13px;
+    init => { Palette.color-scheme = ColorScheme.light; }
+
+    in property <int> step;
+    in property <bool> busy;
+    in property <bool> running;
+    in property <bool> supported;
+    in property <bool> can-resume;
+    in property <bool> demo;
+    in property <string> environment-text: "環境を確認しています…";
+    in property <string> os-label: "確認中…";
+    in property <string> pc-label: "確認中…";
+    in property <string> board-label: "確認中…";
+    in property <string> winget-label: "確認中…";
+    in property <string> network-label: "確認中…";
+    in property <string> device-label: "確認中…";
+    in property <string> message;
+    in property <string> selection-text: "選択中: 0 件";
+    in property <string> driver-summary: "検索すると、このPCに適用できるドライバーを表示します。";
+    in property <string> confirmation-text;
+    in property <string> review-text;
+    in property <string> log-text;
+    in property <[ItemRow]> apps;
+    in property <[ItemRow]> drivers;
+    in property <[ItemRow]> removals;
+    in property <string> removal-summary: "「標準アプリを検出」で、この利用者の候補を表示します。";
+    in-out property <string> removal-query;
+    in property <bool> has-removals;
+    in-out property <bool> removal-consent;
+    in property <[ItemRow]> results;
+    in property <[CategoryRow]> categories;
+    in property <int> visible-app-count;
+    in-out property <string> app-category: "すべて";
+    in-out property <string> app-query;
+    in-out property <string> app-sort: "名前 A → Z";
+    in-out property <string> app-tag;
+    in-out property <length> app-list-y;
+    in property <string> active-tag;
+    in property <string> catalog-status;
+    in property <bool> has-catalog;
+    in property <[string]> tag-names;
+    in property <string> tag-status;
+    in property <int> visible-tag-count;
+    in property <int> total-tag-count;
+    in-out property <string> tag-filter;
+    in-out property <bool> tags-open;
+    in-out property <bool> transfer-open;
+    in property <bool> transfer-import;
+    in property <bool> transfer-ready;
+    in property <bool> transfer-missing;
+    in property <string> transfer-text;
+    in property <bool> match-available;
+    in-out property <bool> match-open;
+    in property <[ItemRow]> match-sources;
+    in property <[ItemRow]> match-apps;
+    in property <string> match-source-count;
+    in-out property <string> match-source-query;
+    in-out property <bool> match-only-missing: true;
+    in-out property <string> match-query;
+    in-out property <string> match-mode: "すべての語（AND）";
+    in property <[string]> match-terms;
+    in-out property <string> match-term;
+    in property <string> match-status;
+    in property <string> match-detail-text;
+    in property <string> match-selected-text;
+    in property <bool> match-can-undo;
+    in-out property <bool> source-consent;
+    in-out property <bool> install-consent;
+    in-out property <bool> update-existing;
+    in-out property <bool> custom-open;
+    in-out property <bool> details-open;
+    in-out property <bool> about-open;
+    in-out property <bool> log-open;
+    in property <string> detail-text;
+    in property <bool> detail-can-open;
+    in property <string> detail-link-label: "配布元のページを開く";
+    in property <bool> detail-category-editable;
+    in-out property <string> detail-category;
+    in-out property <string> custom-location;
+    in-out property <string> custom-name;
+    in-out property <string> custom-args: "[]";
+    in-out property <string> custom-hash;
+    in-out property <string> custom-category: "一般的なアプリケーション";
+
+    callback navigate(int);
+    callback refresh-environment();
+    callback show-environment();
+    callback prepare-winget();
+    callback filter-apps(string, string);
+    callback fetch-catalog();
+    callback search-tag(string);
+    callback open-tags();
+    callback refresh-tags();
+    callback filter-tags();
+    callback choose-tag(string);
+    callback clear-tag();
+    callback sort-apps(string);
+    callback toggle-app(string, bool);
+    callback toggle-driver(string, bool);
+    callback show-details(string);
+    callback open-detail-url();
+    callback change-detail-category(string);
+    callback scan-drivers();
+    callback scan-removals();
+    callback filter-removals();
+    callback toggle-removal(string, bool);
+    callback save-profile();
+    callback load-profile();
+    callback scan-installed();
+    callback export-selection();
+    callback confirm-transfer();
+    callback relink-import();
+    callback open-matches();
+    callback close-matches();
+    callback filter-match-sources();
+    callback choose-match-source(string);
+    callback filter-matches();
+    callback add-name-match(string);
+    callback undo-name-match();
+    callback match-details(string);
+    callback add-custom();
+    callback browse-installer();
+    callback run-installation();
+    callback cancel-installation();
+    callback resume-installation();
+    callback open-logs();
+    callback open-release-page();
+
+    HorizontalLayout {
+        Rectangle {
+            width: 180px; background: #eef0f3;
+            Rectangle { x: parent.width - 1px; width: 1px; background: #dce1e7; }
+            VerticalBox {
+                padding: 18px; spacing: 8px;
+                Text { height: 52px; text: "Application\nPre-Installer"; color: #263444; font-size: 17px; font-weight: 600; vertical-alignment: center; }
+                Rectangle { height: 22px; background: transparent; }
+                for label[index] in ["環境確認", "アプリ選択", "標準アプリの削除", "ドライバー選択", "実行内容の確認", "実行・結果"] : Rectangle {
+                    height: 48px; border-radius: 5px;
+                    background: root.step == index ? #ffffff : transparent;
+                    Rectangle { x: 0; y: 12px; width: 3px; height: 24px; border-radius: 2px; background: root.step == index ? #2865a8 : transparent; }
+                    HorizontalBox {
+                        padding: 10px; spacing: 8px;
+                        Text { width: 18px; text: index + 1; color: root.step == index ? #2865a8 : #7c8794; font-size: 12px; vertical-alignment: center; }
+                        Text { text: label; color: root.step == index ? #223348 : #657180; font-size: 12px; font-weight: root.step == index ? 600 : 400; vertical-alignment: center; }
+                    }
+                }
+                Rectangle { vertical-stretch: 1; background: transparent; }
+                if root.demo : Text { height: 24px; text: "デモモード"; color: #42638a; font-size: 12px; vertical-alignment: center; }
+                Text { height: 38px; text: "Windows 11 / x64\nv0.5.0"; color: #75808d; font-size: 11px; vertical-alignment: center; }
+                Button { height: 32px; text: "このアプリについて"; clicked => { root.about-open = true; } }
+            }
+        }
+        VerticalBox {
+            padding: 20px; spacing: 14px;
+            HorizontalBox {
+                height: 60px; padding: 0; spacing: 12px;
+                VerticalBox {
+                    padding: 0; spacing: 5px; alignment: center;
+                    Text { height: 30px; text: ["環境の確認", "アプリの選択", "Windows標準アプリの削除", "ドライバーの選択", "実行内容の確認", "実行状況と結果"][root.step]; font-size: 23px; font-weight: 600; color: #222e3c; vertical-alignment: center; }
+                    Text { height: 20px; text: ["PCの情報とインストールの準備状況を確認します。", "WinGetの全件一覧から、必要なアプリだけ選択します。", "この利用者に登録されている標準アプリから、削除するものを選びます。", "Windows Updateで、このPCに適合する候補を探します。", "取得元・利用条件・手動操作が必要な項目を確認してください。", "各項目の状態を確認できます。詳細はログに記録します。"][root.step]; color: #687585; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                }
+                if root.busy : Spinner { width: 24px; height: 24px; }
+            }
+
+            if root.step == 0 : Rectangle {
+                background: transparent; vertical-stretch: 1;
+                Rectangle {
+                    width: min(1040px, parent.width); height: 410px;
+                    x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                    background: transparent;
+                    HorizontalBox {
+                        padding: 0; spacing: 20px;
+                        Rectangle {
+                            horizontal-stretch: 1; background: white; border-radius: 6px; border-color: #dde2e8; border-width: 1px;
+                            VerticalBox {
+                                padding: 18px; spacing: 12px;
+                                HorizontalBox {
+                                    height: 32px; padding: 0;
+                                    Text { text: "検出した環境"; font-size: 15px; font-weight: 600; color: #2d3a4a; vertical-alignment: center; }
+                                    Button { width: 76px; text: "再確認"; enabled: !root.busy; clicked => { root.refresh-environment(); } }
+                                }
+                                VerticalBox {
+                                    height: 252px; padding: 0; spacing: 0;
+                                    EnvironmentField { label: "OS"; value: root.os-label; }
+                                    EnvironmentField { label: "PC"; value: root.pc-label; }
+                                    EnvironmentField { label: "マザーボード"; value: root.board-label; }
+                                    EnvironmentField { label: "WinGet"; value: root.winget-label; }
+                                    EnvironmentField { label: "ネットワーク"; value: root.network-label; }
+                                    EnvironmentField { label: "デバイス"; value: root.device-label; }
+                                }
+                                Rectangle { vertical-stretch: 1; background: transparent; }
+                                Button { height: 32px; text: "ハードウェア・診断情報の詳細"; enabled: !root.busy; clicked => { root.show-environment(); } }
+                            }
+                        }
+                        Rectangle {
+                            width: 258px; background: #ffffff; border-radius: 6px; border-color: #dde2e8; border-width: 1px;
+                            VerticalBox {
+                                padding: 18px; spacing: 12px;
+                                Text { height: 24px; text: "インストールの準備"; font-size: 15px; font-weight: 600; color: #354458; vertical-alignment: center; }
+                                Text { height: 66px; text: "WinGetが未準備の場合は準備・修復を実行してください。ダウンロードにはインターネット接続が必要です。"; color: #687585; font-size: 12px; wrap: word-wrap; vertical-alignment: center; }
+                                Button { height: 34px; text: "WinGetを準備・修復"; enabled: !root.busy && !root.demo && root.supported; clicked => { root.prepare-winget(); } }
+                                Rectangle { height: 1px; background: #e5e9ee; }
+                                Text { height: 24px; text: "前回の続きから"; font-size: 15px; font-weight: 600; color: #354458; vertical-alignment: center; }
+                                Text { height: 48px; text: "保存された処理を再確認し、未完了の項目から再開できます。"; color: #687585; font-size: 12px; wrap: word-wrap; vertical-alignment: center; }
+                                Button { height: 34px; text: "履歴を確認して再開"; enabled: root.can-resume && !root.busy; clicked => { root.resume-installation(); } }
+                                Rectangle { vertical-stretch: 1; background: transparent; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.step == 1 : VerticalBox {
+                padding: 0; spacing: 10px; vertical-stretch: 1;
+                HorizontalBox {
+                    height: 34px; padding: 0; spacing: 8px;
+                    LineEdit { horizontal-stretch: 1; text <=> root.app-query; placeholder-text: "アプリ名・ID（空白でAND検索）"; edited(text) => { app-scroll.content-y = 0px; root.filter-apps(text, root.app-category); } }
+                    Button { width: 152px; text: "WinGet一覧を取得・更新"; enabled: !root.busy && root.source-consent; clicked => { app-scroll.content-y = 0px; root.fetch-catalog(); } }
+                    Button { width: 84px; text: "独自登録"; enabled: !root.busy; clicked => { root.custom-open = true; } }
+                }
+                HorizontalBox {
+                    height: 32px; padding: 0; spacing: 8px;
+                    CheckBox { text: "WinGetソースの利用条件に同意する"; checked <=> root.source-consent; enabled: !root.busy; }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    Button { width: 124px; text: "JSONインポート"; enabled: !root.busy; clicked => { root.load-profile(); } }
+                    Button { width: 124px; text: "JSONエクスポート"; enabled: !root.busy; clicked => { root.save-profile(); } }
+                }
+                HorizontalBox {
+                    padding: 0; spacing: 14px; vertical-stretch: 1;
+                    Rectangle {
+                        width: 184px; background: #eef0f3; border-radius: 6px;
+                        VerticalBox {
+                            padding: 8px; spacing: 4px;
+                            Text { height: 20px; text: "表示"; color: #687585; font-size: 11px; vertical-alignment: center; }
+                            for category in root.categories : Rectangle {
+                                height: 34px; border-radius: 4px;
+                                accessible-role: button; accessible-label: category.name + " " + category.count + "件";
+                                accessible-enabled: !root.busy;
+                                accessible-checkable: true; accessible-checked: root.app-category == category.name;
+                                accessible-action-default => { category-touch.clicked(); }
+                                forward-focus: category-focus;
+                                border-width: category-focus.has-focus ? 1px : 0px; border-color: #2865a8;
+                                background: root.app-category == category.name ? #dce8f7 : category-touch.has-hover ? #e4e8ee : transparent;
+                                HorizontalBox {
+                                    padding: 10px; spacing: 4px;
+                                    Text { text: category.label; color: root.app-category == category.name ? #214e80 : #455466; font-size: 12px; font-weight: root.app-category == category.name ? 600 : 400; vertical-alignment: center; }
+                                    Text { width: 40px; text: category.count; color: #738295; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; }
+                                }
+                                category-touch := TouchArea { enabled: !root.busy; mouse-cursor: pointer; clicked => { category-focus.focus(); app-scroll.content-y = 0px; root.filter-apps(root.app-query, category.name); } }
+                                category-focus := FocusScope {
+                                    width: 0px; enabled: !root.busy;
+                                    key-pressed(event) => {
+                                        if event.text == Key.Space || event.text == Key.Return { category-touch.clicked(); return accept; }
+                                        return reject;
+                                    }
+                                }
+                            }
+                            Rectangle { height: 4px; background: transparent; }
+                            LineEdit { height: 32px; text <=> root.app-tag; placeholder-text: "タグ: browser など"; enabled: !root.busy; }
+                            HorizontalBox {
+                                height: 32px; padding: 0; spacing: 4px;
+                                Button { text: "タグ検索"; enabled: !root.busy && root.source-consent && root.has-catalog; clicked => { app-scroll.content-y=0px; root.search-tag(root.app-tag); } }
+                                Button { text: "解除"; enabled: !root.busy && root.active-tag != ""; clicked => { app-scroll.content-y=0px; root.clear-tag(); } }
+                            }
+                            Button { height: 32px; text: "タグ一覧から選ぶ"; enabled: !root.busy && root.has-catalog; clicked => { root.open-tags(); } }
+                            Rectangle { vertical-stretch: 1; background: transparent; }
+                            Text { height: 36px; text: "タグで絞り込めます。\n統一分類・人気・評価は未提供"; color: #778391; font-size: 11px; wrap: word-wrap; vertical-alignment: center; }
+                        }
+                    }
+                    Rectangle {
+                        background: white; border-width: 1px; border-color: #dde2e8; border-radius: 6px; horizontal-stretch: 1;
+                        VerticalBox {
+                            padding: 1px; spacing: 0;
+                            Rectangle {
+                                height: 36px; background: #f8f9fb;
+                                HorizontalBox {
+                                    padding-left: 14px; padding-right: 14px; padding-top: 0; padding-bottom: 0;
+                                    Text { text: root.visible-app-count + " 件" + (root.active-tag == "" ? "" : " / tag: " + root.active-tag); font-size: 12px; color: #435164; vertical-alignment: center; overflow: elide; }
+                                    Text { width: 56px; text: "並び替え"; color: #687585; font-size: 11px; vertical-alignment: center; }
+                                    ComboBox { width: 172px; height: 32px; model: ["名前 A → Z", "名前 Z → A", "ID A → Z", "ID Z → A", "選択中を先に"]; current-value <=> root.app-sort; enabled: !root.busy; selected(value) => { app-scroll.content-y=0px; root.sort-apps(value); } }
+                                }
+                            }
+                            app-scroll := ListView {
+                                vertical-stretch: 1;
+                                content-y <=> root.app-list-y;
+                                for item in root.apps : ItemCard {
+                                    width: app-scroll.visible-width;
+                                    item: item; locked: root.busy;
+                                    toggle(value) => { root.toggle-app(item.key, value); }
+                                    details => { root.show-details(item.key); }
+                                }
+                            }
+                        }
+                        if root.visible-app-count == 0 : Text {
+                            x: 24px; width: parent.width - 48px; y: 48px; height: parent.height - 60px;
+                            text: !root.has-catalog ? "プリセットはありません\nソースの利用条件を確認し、WinGet一覧を取得してください。" : "該当するアプリがありません\n表示条件・タグ・検索キーワードを変更してください。";
+                            color: #7b8795; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap;
+                        }
+                    }
+                }
+                HorizontalBox {
+                    height: 26px; padding: 0; spacing: 10px;
+                    CheckBox { text: "インストール済みも更新する（通常はスキップ）"; checked <=> root.update-existing; enabled: !root.busy; }
+                    Text { text: root.catalog-status; color: #778391; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                }
+            }
+
+            if root.step == 2 : Rectangle {
+                background: white; border-radius: 6px; border-color: #dde2e8; border-width: 1px; vertical-stretch: 1;
+                VerticalBox {
+                    padding: 16px; spacing: 10px;
+                    HorizontalBox {
+                        height: 34px; padding: 0; spacing: 12px;
+                        LineEdit { text <=> root.removal-query; placeholder-text: "標準アプリの名前で絞り込み"; enabled: !root.busy; edited => { removal-scroll.content-y=0px; root.filter-removals(); } }
+                        Button { width: 154px; text: "標準アプリを検出"; enabled: !root.busy && root.supported; clicked => { removal-scroll.content-y=0px; root.scan-removals(); } }
+                    }
+                    Text { height: 34px; text: root.removal-summary; color: #687585; font-size: 12px; wrap: word-wrap; vertical-alignment: center; }
+                    Rectangle {
+                        vertical-stretch: 1; background: transparent;
+                        removal-scroll := ListView {
+                            width: parent.width; height: parent.height;
+                            for item in root.removals : ItemCard {
+                                width: removal-scroll.visible-width; item: item; locked: root.busy;
+                                toggle(value) => { root.toggle-removal(item.key, value); }
+                                details => { root.show-details(item.key); }
+                            }
+                        }
+                        if root.removals.length == 0 : Text {
+                            x: 28px; width: parent.width - 56px; height: parent.height;
+                            text: "削除候補は表示されていません\n検出するか、削除せずに次へ進んでください。";
+                            color: #7b8795; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap;
+                        }
+                    }
+                    Text { height: 62px; text: "初期状態はすべて未選択です。ここでは選ぶだけで、削除は確認画面の後に実行します。\nアプリ内のデータ・設定が失われる場合があります。必要なデータは先にバックアップしてください。\n対象は現在の利用者の標準Storeアプリです。メーカー製のデスクトップソフトは対象外です。"; color: #687585; font-size: 12px; wrap: word-wrap; vertical-alignment: center; }
+                }
+            }
+
+            if root.step == 3 : Rectangle {
+                background: white; border-radius: 6px; border-color: #dde2e8; border-width: 1px; vertical-stretch: 1;
+                VerticalBox {
+                    padding: 16px; spacing: 12px;
+                    HorizontalBox {
+                        height: 34px; padding: 0; spacing: 12px;
+                        Text { text: "Windows Update"; color: #354458; font-size: 15px; font-weight: 600; vertical-alignment: center; }
+                        Button { width: 154px; text: "ドライバーを検索"; enabled: !root.busy && root.supported; clicked => { root.scan-drivers(); } }
+                    }
+                    Text { min-height: 24px; max-height: 48px; text: root.driver-summary; color: #687585; font-size: 12px; wrap: word-wrap; vertical-alignment: center; }
+                    Rectangle {
+                        vertical-stretch: 1; background: transparent;
+                        ScrollView {
+                            width: parent.width; height: parent.height;
+                            VerticalBox { padding: 0; spacing: 0;
+                                for item in root.drivers : ItemCard { item: item; locked: root.busy; toggle(value) => { root.toggle-driver(item.key, value); } details => { root.show-details(item.key); } }
+                            }
+                        }
+                        if root.drivers.length == 0 : Text {
+                            x: 28px; width: parent.width - 56px; height: parent.height;
+                            text: root.busy ? "ドライバー候補を検索しています…" : "ドライバー候補は表示されていません\n検索を実行するか、アプリの導入へ進んでください。";
+                            color: #7b8795; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap;
+                        }
+                    }
+                    Text { height: 38px; text: "候補はすべて未選択です。BIOS・ファームウェアは対象外です。\n候補がない場合も、デバイスの正常動作を保証するものではありません。"; color: #778391; font-size: 11px; wrap: word-wrap; vertical-alignment: center; }
+                }
+            }
+
+            if root.step == 4 : Rectangle {
+                background: white; border-radius: 6px; border-color: #dde2e8; border-width: 1px; vertical-stretch: 1;
+                VerticalBox {
+                    padding: 18px; spacing: 14px;
+                    Text { height: 36px; text: root.confirmation-text; color: #354458; font-size: 13px; font-weight: 600; wrap: word-wrap; vertical-alignment: center; }
+                    TextEdit { text: root.review-text; read-only: true; wrap: word-wrap; vertical-stretch: 1; }
+                    Text { height: 42px; text: "標準アプリの削除 → ドライバー → アプリ導入の順に処理します。\n再起動が必要な場合は残りを保留します。認証は各ソフトの画面で行ってください。"; color: #687585; font-size: 12px; wrap: word-wrap; vertical-alignment: center; }
+                    if root.has-removals : CheckBox { height: 38px; text: "削除対象と利用者の範囲を確認し、アプリ内のデータ・設定が失われる可能性に同意する"; checked <=> root.removal-consent; enabled: !root.busy; }
+                    CheckBox { height: 30px; text: "取得元・利用条件・実行内容を確認し、選択した処理の実行に同意する"; checked <=> root.install-consent; enabled: !root.busy; }
+                }
+            }
+
+            if root.step == 5 : Rectangle {
+                background: white; border-radius: 6px; border-color: #dde2e8; border-width: 1px; vertical-stretch: 1;
+                VerticalBox {
+                    padding: 16px; spacing: 12px;
+                    HorizontalBox {
+                        height: 34px; padding: 0; spacing: 8px;
+                        Text { text: root.running ? "処理を実行中" : "処理結果"; color: #354458; font-size: 15px; font-weight: 600; vertical-alignment: center; }
+                        Button { width: 92px; text: "詳細ログ"; clicked => { root.log-open = true; } }
+                        Button { width: 104px; text: "ログ保存先"; clicked => { root.open-logs(); } }
+                        Button { width: 72px; text: "中止"; enabled: root.running; clicked => { root.cancel-installation(); } }
+                    }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalBox { padding: 0; spacing: 0;
+                            for item in root.results : ItemCard { item: item; locked: true; selectable: false; details => { root.show-details(item.key); } }
+                        }
+                    }
+                    Text { height: 38px; text: "中止すると新しい処理の開始を止め、実行中の処理は完了を待ちます。\n操作待ち・確認不能の項目は、状態を確認してから再選択できます。"; color: #778391; font-size: 11px; wrap: word-wrap; vertical-alignment: center; }
+                }
+            }
+
+            Rectangle {
+                height: 44px; border-radius: 4px; background: #edf1f6;
+                Text { x: 12px; width: parent.width - 24px; height: parent.height; text: root.message; color: #526278; font-size: 12px; wrap: word-wrap; vertical-alignment: center; overflow: elide; }
+            }
+            HorizontalBox {
+                height: 36px; padding: 0; spacing: 14px;
+                Button { width: 82px; text: "戻る"; enabled: root.step > 0 && !root.busy; clicked => { root.navigate(root.step - 1); } }
+                Text { text: root.selection-text; color: #687585; font-size: 12px; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; background: transparent; }
+                if root.step < 4 : Button { width: 128px; text: "次へ"; primary: true; enabled: !root.busy && root.supported; clicked => { root.navigate(root.step + 1); } }
+                if root.step == 4 : Button { width: 184px; text: "選択した処理を実行"; primary: true; enabled: !root.busy && root.install-consent && (!root.has-removals || root.removal-consent) && root.supported; clicked => { root.run-installation(); } }
+                if root.step == 5 : Button { width: 152px; text: "アプリ選択へ戻る"; enabled: !root.busy; clicked => { root.navigate(1); } }
+            }
+        }
+    }
+
+    if root.details-open || root.about-open || root.custom-open || root.log-open || root.tags-open || root.transfer-open || root.match-open : Rectangle {
+        background: #17233377;
+        TouchArea { }
+        Rectangle {
+            width: min(root.match-open ? 1060px : 820px, parent.width - 64px); height: min(root.about-open ? 500px : root.custom-open ? 600px : root.match-open ? 740px : 700px, parent.height - 64px);
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            border-radius: 8px; background: #ffffff;
+            VerticalBox {
+                padding: 22px; spacing: 14px;
+                HorizontalBox {
+                    height: 34px; padding: 0; spacing: 12px;
+                    Text { text: root.match-open ? "登録名からWinGet候補を探す" : root.about-open ? "Application Pre-Installer" : root.custom-open ? "インストーラーの登録" : root.log-open ? "実行ログ" : root.tags-open ? "タグ一覧" : root.transfer-open ? (root.transfer-import ? "JSONインポートの確認" : "アプリをJSONへエクスポート") : "詳細情報"; font-size: 19px; font-weight: 600; color: #2d3a4a; vertical-alignment: center; }
+                    Button { width: root.match-open ? 112px : 76px; text: root.match-open ? "書き出しへ戻る" : "閉じる"; enabled: !(root.transfer-open || root.match-open) || !root.busy; clicked => { if root.match-open { root.close-matches(); } else { root.details-open=false; root.about-open=false; root.custom-open=false; root.log-open=false; root.tags-open=false; root.transfer-open=false; } } }
+                }
+                if root.match-open : VerticalBox {
+                    padding: 0; spacing: 12px; vertical-stretch: 1;
+                    Text { height: 36px; text: "左でWindowsの登録名を選び、右で候補を探してください。製品・版・提供元を確認して「追加」します。\n名前が一致しても自動追加しません。ここではインストールや削除は行いません。"; wrap: word-wrap; color: #687585; font-size: 12px; vertical-alignment: center; }
+                    HorizontalBox {
+                        padding: 0; spacing: 16px; vertical-stretch: 1;
+                        VerticalBox {
+                            width: 262px; padding: 0; spacing: 8px;
+                            Text { height: 20px; text: root.match-source-count; color: #435164; font-size: 12px; vertical-alignment: center; }
+                            LineEdit { height: 32px; text <=> root.match-source-query; placeholder-text: "Windowsの登録名を絞り込み"; enabled: !root.busy; edited => { match-source-list.content-y=0px; root.filter-match-sources(); } }
+                            CheckBox { height: 28px; text: "自動出力の同名項目を隠す"; checked <=> root.match-only-missing; enabled: !root.busy; toggled => { match-source-list.content-y=0px; root.filter-match-sources(); } }
+                            match-source-list := ListView {
+                                vertical-stretch: 1;
+                                for item in root.match-sources : MatchSource { width: match-source-list.visible-width; item: item; locked: root.busy; choose => { match-candidate-list.content-y=0px; root.choose-match-source(item.key); } }
+                            }
+                        }
+                        VerticalBox {
+                            padding: 0; spacing: 8px; horizontal-stretch: 1;
+                            HorizontalBox {
+                                height: 32px; padding: 0; spacing: 8px;
+                                LineEdit { text <=> root.match-query; placeholder-text: "候補名・IDを検索（空白で単語を区切る）"; enabled: !root.busy; edited => { match-candidate-list.content-y=0px; root.filter-matches(); } }
+                                ComboBox { width: 158px; model: ["すべての語（AND）", "いずれかの語（OR）", "正規表現"]; current-value <=> root.match-mode; enabled: !root.busy; selected => { match-candidate-list.content-y=0px; root.filter-matches(); } }
+                            }
+                            HorizontalBox {
+                                height: 32px; padding: 0; spacing: 8px;
+                                Text { width: 70px; text: "分割した語"; color: #687585; font-size: 12px; vertical-alignment: center; }
+                                ComboBox { model: root.match-terms; current-value <=> root.match-term; enabled: !root.busy; selected(value) => { root.match-query=value; match-candidate-list.content-y=0px; root.filter-matches(); } }
+                                Button { width: 148px; text: "WinGet一覧を更新"; enabled: !root.busy && root.source-consent; clicked => { match-candidate-list.content-y=0px; root.fetch-catalog(); } }
+                            }
+                            Text { height: 36px; text: root.match-status; color: #536984; font-size: 11px; wrap: word-wrap; vertical-alignment: center; }
+                            match-candidate-list := ListView {
+                                vertical-stretch: 1;
+                                for item in root.match-apps : MatchCandidate { width: match-candidate-list.visible-width; item: item; locked: root.busy; add => { root.add-name-match(item.key); } details => { root.match-details(item.key); } }
+                            }
+                            TextEdit { height: 112px; text: root.match-detail-text; read-only: true; wrap: word-wrap; }
+                        }
+                    }
+                    HorizontalBox {
+                        height: 36px; padding: 0; spacing: 12px;
+                        Text { text: root.match-selected-text; color: #687585; font-size: 11px; wrap: word-wrap; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; }
+                        Button { width: 112px; text: "追加を取り消す"; enabled: !root.busy && root.match-can-undo; clicked => { root.undo-name-match(); } }
+                        Button { width: 190px; text: "書き出し確認へ戻る"; primary: true; enabled: !root.busy; clicked => { root.close-matches(); } }
+                    }
+                }
+                if root.transfer-open : VerticalBox {
+                    padding: 0; spacing: 12px; vertical-stretch: 1;
+                    if !root.transfer-import : HorizontalBox {
+                        height: 36px; padding: 0; spacing: 12px;
+                        Button { width: 340px; text: "このPCのインストール済みを読み取る"; primary: true; enabled: !root.busy; clicked => { root.scan-installed(); } }
+                        Button { width: 170px; text: "選択中のアプリを使う"; enabled: !root.busy; clicked => { root.export-selection(); } }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                    }
+                    if !root.transfer-import : CheckBox { height: 28px; text: "WinGetソースの利用条件を確認し、同意する"; checked <=> root.source-consent; enabled: !root.busy; }
+                    if !root.transfer-import && root.match-available : Button { height: 34px; text: "名前から不足アプリを探す"; enabled: !root.busy; clicked => { root.open-matches(); } }
+                    TextEdit { text: root.transfer-text; read-only: true; wrap: word-wrap; vertical-stretch: 1; }
+                    Text { height: 50px; text: root.transfer-import ? "確定すると現在の選択を置き換えます。読み込みだけではインストールしません。\nドライバー・削除対象・同意は引き継がず、インストール済みは既定でスキップします。" : "アプリの設定・データ・購入情報はコピーしません。識別できないソフトは含まれません。\n別PCではJSONをインポートし、必要なアプリを確認してから導入してください。"; font-size: 12px; color: #687585; wrap: word-wrap; vertical-alignment: center; }
+                    if root.transfer-missing : Button { height: 34px; text: "見つからないインストーラーのファイルを指定"; enabled: !root.busy; clicked => { root.relink-import(); } }
+                    HorizontalBox {
+                        height: 36px; padding: 0;
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        Button { width: 190px; text: root.transfer-import ? "アプリの選択へ反映" : "JSONファイルに保存"; primary: true; enabled: !root.busy && root.transfer-ready && !root.transfer-missing; clicked => { root.confirm-transfer(); } }
+                    }
+                }
+                if root.tags-open : VerticalBox {
+                    padding: 0; spacing: 10px; vertical-stretch: 1;
+                    HorizontalBox {
+                        height: 34px; padding: 0; spacing: 10px;
+                        LineEdit { text <=> root.tag-filter; placeholder-text: "取得したすべてのタグから検索"; enabled: !root.busy; edited => { tag-list.content-y=0px; root.filter-tags(); } }
+                        Button { width: 110px; text: "一覧を再取得"; enabled: !root.busy; clicked => { tag-list.content-y=0px; root.refresh-tags(); } }
+                    }
+                    Text { height: 40px; text: root.visible-tag-count + " / " + root.total-tag-count + " 件\n" + root.tag-status; color: #687585; font-size: 11px; wrap: word-wrap; vertical-alignment: center; overflow: elide; }
+                    tag-list := ListView {
+                        vertical-stretch: 1;
+                        for tag in root.tag-names : Button {
+                            width: tag-list.visible-width; height: 34px; text: tag;
+                            enabled: !root.busy; clicked => { root.choose-tag(tag); }
+                        }
+                    }
+                    Text { height: 48px; text: "選ぶとWinGetでタグ検索します。タグ名の大小文字・日本語・記号は元の表記を保持します。\n取得対象は現在のWinGetコミュニティ索引です。索引の形式・環境によって取得できない場合があります。"; color: #778391; font-size: 11px; wrap: word-wrap; vertical-alignment: center; }
+                }
+                if root.details-open : TextEdit { text: root.detail-text; read-only: true; wrap: word-wrap; vertical-stretch: 1; }
+                if root.details-open && root.detail-category-editable : HorizontalBox {
+                    height: 34px; padding: 0; spacing: 12px;
+                    Text { text: "カテゴリー"; color: #687585; vertical-alignment: center; }
+                    ComboBox { width: 320px; model: ["一般的なアプリケーション", "ゲーム系アプリケーション", "クリエイターアプリケーション", "デベロッパーアプリケーション"]; current-value <=> root.detail-category; selected(value) => { root.change-detail-category(value); } }
+                }
+                if root.details-open && root.detail-can-open : Button { height: 34px; text: root.detail-link-label; clicked => { root.open-detail-url(); } }
+                if root.log-open : TextEdit { text: root.log-text; read-only: true; wrap: word-wrap; vertical-stretch: 1; }
+                if root.about-open : VerticalBox {
+                    padding: 0; spacing: 14px; alignment: center;
+                    Text { height: 148px; text: "v0.5.0 / MIT License\n\n必要なアプリとドライバーを選んで導入します。\nプロファイルと実行履歴は利用者のPC内に保存し、独自のテレメトリーは送信しません。\n\nドライバー対応: Windows Update配信分\nメーカー独自配布・BIOS・ファームウェアは初版の対象外です。"; color: #596778; wrap: word-wrap; vertical-alignment: center; }
+                    Button { height: 34px; text: "GitHub Releases・更新情報"; clicked => { root.open-release-page(); } }
+                    Rectangle { height: 134px; background: transparent; AboutSlint { width: 260px; height: 134px; x: (parent.width - self.width) / 2; } }
+                }
+                if root.custom-open : VerticalBox {
+                    padding: 0; spacing: 8px;
+                    Text { height: 24px; text: "登録した項目は未選択で追加されます。実行前に内容を再確認できます。"; color: #687585; font-size: 12px; vertical-alignment: center; }
+                    Text { height: 20px; text: "アプリ名（インストール済み登録名の照合にも使用）"; color: #435164; vertical-alignment: center; }
+                    LineEdit { height: 32px; text <=> root.custom-name; placeholder-text: "例: My Application"; }
+                    Text { height: 20px; text: "カテゴリー"; color: #435164; vertical-alignment: center; }
+                    ComboBox { height: 32px; model: ["一般的なアプリケーション", "ゲーム系アプリケーション", "クリエイターアプリケーション", "デベロッパーアプリケーション"]; current-value <=> root.custom-category; }
+                    Text { height: 20px; text: "HTTPSの直接ダウンロードURL または ローカルの.exe / .msi"; color: #435164; vertical-alignment: center; }
+                    HorizontalBox { height: 32px; padding: 0; spacing: 8px; LineEdit { text <=> root.custom-location; placeholder-text: "https://.../setup.exe"; } Button { width: 100px; text: "ファイル選択"; clicked => { root.browse-installer(); } } }
+                    Text { height: 20px; text: "引数（文字列配列のJSON）"; color: #435164; vertical-alignment: center; }
+                    LineEdit { height: 32px; text <=> root.custom-args; placeholder-text: "[]"; }
+                    Text { height: 20px; text: "SHA-256（任意・指定時は一致を必須にする）"; color: #435164; vertical-alignment: center; }
+                    LineEdit { height: 32px; text <=> root.custom-hash; }
+                    Text { height: 44px; text: "インストーラーを対話型で起動します。認証や再起動は各ソフトの画面で操作してください。\nシェルコマンド・スクリプトは登録できません。"; color: #778391; font-size: 11px; wrap: word-wrap; vertical-alignment: center; }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    HorizontalBox {
+                        height: 34px; padding: 0;
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        Button { width: 216px; text: "候補一覧に追加（未選択）"; primary: true; clicked => { root.add-custom(); } }
+                    }
+                }
+            }
+        }
+    }
+}
